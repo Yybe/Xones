@@ -1,0 +1,5 @@
+{
+  // LSP daemon project config for oh-my-openagent
+  // Overrides and project-specific LSP settings
+  "servers": {}
+}

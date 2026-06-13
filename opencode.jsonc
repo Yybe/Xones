@@ -1,0 +1,6 @@
+{
+  // oh-my-openagent — project-level config
+  // Inherits global plugin settings; project overrides here
+  "$schema": "https://opencode.ai/config.json",
+  "plugin": ["oh-my-openagent@latest"]
+}
