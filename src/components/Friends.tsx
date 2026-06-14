@@ -1,3 +1,4 @@
+import { useEffect, useState, useRef } from 'react';
 import { useStore } from '../store';
 import { ZONES } from '../types';
 
@@ -10,8 +11,41 @@ function elapsed(start: number): string {
 }
 
 export default function Friends() {
-  const { friends, friendRequests, acceptRequest, rejectRequest, goHome } = useStore();
+  const {
+    friends, friendRequests,
+    acceptRequest, rejectRequest,
+    goHome,
+    loadFriendRequests, loadFriends,
+    searchUsers, searchResults, sendFriendRequest, respondToRequest,
+    user,
+  } = useStore();
 
+  const [searchQuery, setSearchQuery] = useState('');
+  const searchTimer = useRef<ReturnType<typeof setTimeout>>();
+
+  // Load friend data on mount
+  useEffect(() => {
+    if (user && user.id !== 'me') {
+      loadFriendRequests();
+      loadFriends();
+    }
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const handleSearch = (val: string) => {
+    setSearchQuery(val);
+    if (searchTimer.current) clearTimeout(searchTimer.current);
+    if (val.trim().length < 2) {
+      useStore.setState({ searchResults: [] });
+      return;
+    }
+    searchTimer.current = setTimeout(() => searchUsers(val.trim()), 300);
+  };
+
+  const handleSendRequest = async (toUserId: string) => {
+    await sendFriendRequest(toUserId);
+  };
+
+  const isAuthed = user && user.id !== 'me';
   const inZone = friends.filter(f => f.status === 'in-zone');
   const idle = friends.filter(f => f.status !== 'in-zone');
   const pending = friendRequests.filter(r => r.status === 'pending');
@@ -39,6 +73,41 @@ export default function Friends() {
       <h1 className="text-2xl font-bold text-text-primary mb-1">Friends</h1>
       <p className="text-text-secondary text-sm mb-6">{inZone.length} in zones • {idle.length} in comfort</p>
 
+      {/* Search bar (only for authenticated users) */}
+      {isAuthed && (
+        <div className="relative mb-6">
+          <input
+            value={searchQuery}
+            onChange={e => handleSearch(e.target.value)}
+            placeholder="Search users by name or email..."
+            className="w-full px-4 py-3 bg-bg-raised border border-border rounded-xl text-text-primary placeholder-text-muted text-sm focus:outline-none focus:border-accent/50 transition-colors"
+          />
+
+          {/* Search results dropdown */}
+          {searchResults.length > 0 && (
+            <div className="absolute top-full left-0 right-0 mt-1 bg-bg-surface border border-border rounded-xl shadow-lg overflow-hidden z-20">
+              {searchResults.map(r => (
+                <div key={r.id} className="flex items-center gap-3 px-4 py-3 hover:bg-bg-hover/50 transition-colors">
+                  <div className="w-8 h-8 rounded-full bg-bg-raised border border-border flex items-center justify-center text-xs font-semibold text-text-secondary shrink-0">
+                    {r.name[0]}
+                  </div>
+                  <div className="flex-1 min-w-0">
+                    <p className="text-sm font-medium text-text-primary truncate">{r.name}</p>
+                    <p className="text-xs text-text-muted truncate">{r.email}</p>
+                  </div>
+                  <button
+                    onClick={() => handleSendRequest(r.id)}
+                    className="px-3 py-1.5 rounded-lg bg-accent/10 text-accent-soft text-xs font-medium hover:bg-accent/20 transition-colors shrink-0"
+                  >
+                    Add
+                  </button>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+
       {/* Pending requests */}
       {pending.length > 0 && (
         <div className="mb-6">
@@ -51,10 +120,22 @@ export default function Friends() {
               <div className="flex-1">
                 <p className="text-sm font-medium text-text-primary">{r.from.name}</p>
               </div>
-              <button onClick={() => acceptRequest(r.id)} className="px-3 py-1 rounded-lg bg-accent/10 text-accent-soft text-xs font-medium hover:bg-accent/20 transition-colors">
+              <button
+                onClick={() => {
+                  if (isAuthed) respondToRequest(r.id, true);
+                  else acceptRequest(r.id);
+                }}
+                className="px-3 py-1 rounded-lg bg-accent/10 text-accent-soft text-xs font-medium hover:bg-accent/20 transition-colors"
+              >
                 Accept
               </button>
-              <button onClick={() => rejectRequest(r.id)} className="px-3 py-1 rounded-lg text-text-muted text-xs hover:text-red-400 transition-colors">
+              <button
+                onClick={() => {
+                  if (isAuthed) respondToRequest(r.id, false);
+                  else rejectRequest(r.id);
+                }}
+                className="px-3 py-1 rounded-lg text-text-muted text-xs hover:text-red-400 transition-colors"
+              >
                 ✕
               </button>
             </div>

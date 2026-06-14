@@ -2,21 +2,13 @@ import { useStore } from '../store';
 import { ZONES } from '../types';
 import type { ZoneId } from '../types';
 
-function elapsed(start: number): string {
-  const m = Math.floor((Date.now() - start) / 60000);
-  if (m < 60) return `${m}m`;
-  const h = Math.floor(m / 60);
-  const rm = m % 60;
-  return rm > 0 ? `${h}h ${rm}m` : `${h}h`;
-}
-
 export default function ComfortZone() {
   const { enterZone, friends } = useStore();
-  const activeFriends = friends.filter(f => f.status === 'in-zone' && f.currentSession);
 
   const zoneKeys: ZoneId[] = ['gaming', 'studying', 'productivity', 'misc'];
 
   // Count friends per zone
+  const activeFriends = friends.filter(f => f.status === 'in-zone' && f.currentSession);
   const zoneCounts: Record<ZoneId, number> = { gaming: 0, studying: 0, productivity: 0, misc: 0 };
   activeFriends.forEach(f => {
     if (f.currentZone) zoneCounts[f.currentZone]++;
@@ -85,45 +77,6 @@ export default function ComfortZone() {
         </div>
       </div>
 
-      {/* Bottom: friend activity — just presence, no feed */}
-      {activeFriends.length > 0 && (
-        <div className="px-4 pb-6 max-w-md mx-auto w-full animate-fade">
-          <div className="border-t border-border pt-5">
-            <p className="text-text-muted text-xs uppercase tracking-wide mb-3">Friends active right now</p>
-            <div className="space-y-2.5">
-              {activeFriends.map(f => (
-                <div key={f.id} className="flex items-center gap-3 group">
-                  {/* Avatar dot */}
-                  <div className="relative">
-                    <div className="w-8 h-8 rounded-full bg-bg-raised border border-border flex items-center justify-center text-xs font-semibold text-text-secondary">
-                      {f.name[0]}
-                    </div>
-                    <div className={`absolute -bottom-0.5 -right-0.5 w-2.5 h-2.5 rounded-full border-2 border-bg-base ${f.currentZone ? zoneDotColor[f.currentZone] : 'bg-text-muted'}`} />
-                  </div>
-
-                  {/* Info */}
-                  <div className="flex-1 min-w-0">
-                    <div className="flex items-center gap-2">
-                      <span className="text-sm font-medium text-text-primary">{f.name}</span>
-                      <span className={`text-xs ${f.currentZone ? zoneTextColor[f.currentZone] : 'text-text-muted'}`}>
-                        {f.currentZone ? ZONES[f.currentZone].label : ''}
-                      </span>
-                    </div>
-                    <p className="text-xs text-text-muted truncate">
-                      {f.currentSession?.name}
-                    </p>
-                  </div>
-
-                  {/* Time */}
-                  <span className="text-xs text-text-muted tabular-nums">
-                    {f.currentSession ? elapsed(f.currentSession.startTime) : ''}
-                  </span>
-                </div>
-              ))}
-            </div>
-          </div>
-        </div>
-      )}
     </div>
   );
 }

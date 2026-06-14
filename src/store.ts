@@ -1,6 +1,26 @@
 import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
 import type { User, Session, GardenPlant, FriendRequest, ZoneId } from './types';
+import {
+  supabase,
+  getCurrentUser,
+  signOut,
+  signUp as sbSignUp,
+  signIn as sbSignIn,
+  signInWithGoogle,
+  getProfile,
+  saveSession,
+  savePlant,
+  fetchSessions,
+  fetchGarden,
+  searchUsers,
+  sendFriendRequest,
+  fetchFriendRequests,
+  respondToRequest,
+  fetchFriends,
+  updateProfileZone,
+  fetchActiveSessions,
+} from './lib/supabase';
 
 const PLANTS: Array<{ emoji: string; label: string }> = [
   { emoji: '🌱', label: 'Sprout' },
@@ -53,8 +73,7 @@ const DEMO_FRIENDS: User[] = [
   },
 ];
 
-let _id = 200;
-const uid = () => `id_${++_id}`;
+const uid = () => crypto.randomUUID();
 
 interface AppState {
   // Auth
@@ -78,7 +97,16 @@ interface AppState {
   garden: GardenPlant[];
 
   // Actions — Auth
-  login: (name: string, email: string) => void;
+  supabaseReady: boolean;
+  authLoading: boolean;
+  authError: string | null;
+  initAuth: () => Promise<void>;
+  demoLogin: (name: string, email: string) => void;
+  signUp: (email: string, password: string) => Promise<void>;
+  signIn: (email: string, password: string) => Promise<void>;
+  signInWithGoogle: () => Promise<void>;
+  setAuthError: (err: string | null) => void;
+  setToast: (t: { message: string; type: 'success' | 'error' } | null) => void;
   finishOnboarding: (name: string) => void;
   logout: () => void;
 
@@ -92,10 +120,18 @@ interface AppState {
   endSession: () => void;
   joinSession: (friendId: string) => void;
 
+  searchResults: User[];
+  toast: { message: string; type: 'success' | 'error' } | null;
+
   // Actions — Social
   addFriend: (id: string) => void;
   acceptRequest: (id: string) => void;
   rejectRequest: (id: string) => void;
+  loadFriendRequests: () => Promise<void>;
+  loadFriends: () => Promise<void>;
+  searchUsers: (query: string) => Promise<void>;
+  sendFriendRequest: (toUserId: string) => Promise<void>;
+  respondToRequest: (id: string, accept: boolean) => Promise<void>;
 }
 
 export const useStore = create<AppState>()(
@@ -104,6 +140,9 @@ export const useStore = create<AppState>()(
       authed: false,
       user: null,
       onboarded: false,
+      supabaseReady: false,
+      authLoading: false,
+      authError: null,
 
       friends: DEMO_FRIENDS,
       friendRequests: [
@@ -118,12 +157,116 @@ export const useStore = create<AppState>()(
 
       garden: [],
 
-      login: (name, email) => {
+      searchResults: [],
+      toast: null,
+
+      initAuth: async () => {
+        set({ authLoading: true });
+        try {
+          const sbUser = await getCurrentUser();
+          if (sbUser) {
+            const [profile, dbSessions, dbGarden] = await Promise.all([
+              getProfile(sbUser.id),
+              fetchSessions(sbUser.id),
+              fetchGarden(sbUser.id),
+            ]);
+            set({
+              authed: true,
+              user: {
+                id: sbUser.id,
+                name: profile?.name || sbUser.user_metadata?.name || sbUser.email?.split('@')[0] || 'User',
+                email: sbUser.email || '',
+                avatar: profile?.avatar_url || sbUser.user_metadata?.avatar_url || '',
+                status: (profile?.status as 'comfort' | 'in-zone') || 'comfort',
+              },
+              onboarded: true,
+              supabaseReady: true,
+              authLoading: false,
+              history: dbSessions,
+              garden: dbGarden,
+              friendRequests: [],
+            });
+            return;
+          }
+        } catch {
+          // Supabase not configured yet — fall through to local mode
+        }
+        set({ supabaseReady: true, authLoading: false });
+      },
+
+      demoLogin: (name, email) => {
         set({
           authed: true,
           user: { id: 'me', name, email, avatar: '', status: 'comfort' },
         });
       },
+
+      signUp: async (email, password) => {
+        set({ authLoading: true, authError: null });
+        const { data, error } = await sbSignUp(email, password);
+        if (error) {
+          set({ authLoading: false, authError: error.message });
+          return;
+        }
+        if (data?.user) {
+          set({
+            authed: true,
+            user: {
+              id: data.user.id,
+              name: data.user.email?.split('@')[0] || 'User',
+              email: data.user.email || '',
+              avatar: '',
+              status: 'comfort',
+            },
+            onboarded: true,
+            supabaseReady: true,
+            authLoading: false,
+            authError: null,
+          });
+        } else {
+          // Email confirmation required
+          set({ authLoading: false, authError: 'Check your email for a confirmation link.' });
+        }
+      },
+
+      signIn: async (email, password) => {
+        set({ authLoading: true, authError: null });
+        const { data, error } = await sbSignIn(email, password);
+        if (error) {
+          set({ authLoading: false, authError: error.message });
+          return;
+        }
+        if (data?.user) {
+          const profile = await getProfile(data.user.id);
+          set({
+            authed: true,
+            user: {
+              id: data.user.id,
+              name: profile?.name || data.user.email?.split('@')[0] || 'User',
+              email: data.user.email || '',
+              avatar: profile?.avatar_url || '',
+              status: (profile?.status as 'comfort' | 'in-zone') || 'comfort',
+            },
+            onboarded: true,
+            supabaseReady: true,
+            authLoading: false,
+            authError: null,
+          });
+        }
+      },
+
+      signInWithGoogle: async () => {
+        set({ authLoading: true, authError: null });
+        const { error } = await signInWithGoogle();
+        if (error) {
+          set({ authLoading: false, authError: error.message });
+        }
+        // On OAuth success, the page redirects so state is set by initAuth on return
+      },
+
+      setAuthError: (err) => set({ authError: err }),
+
+      setToast: (t) => set({ toast: t }),
 
       finishOnboarding: (name) => {
         const u = get().user;
@@ -132,9 +275,11 @@ export const useStore = create<AppState>()(
       },
 
       logout: () => {
+        signOut();
         set({
           authed: false, user: null, onboarded: false,
           view: 'comfort', activeZone: null, activeSession: null,
+          authError: null,
         });
       },
 
@@ -172,6 +317,20 @@ export const useStore = create<AppState>()(
           view: 'zone',
           activeZone: zone,
         });
+        // Sync to Supabase for friend presence
+        if (u.id !== 'me') {
+          updateProfileZone(u.id, 'in-zone', zone);
+          saveSession({
+            id: session.id,
+            userId: u.id,
+            zone: session.zone,
+            name: session.name,
+            mode: session.mode,
+            duration: session.duration,
+            startTime: session.startTime,
+            completed: false,
+          });
+        }
       },
 
       endSession: () => {
@@ -179,18 +338,18 @@ export const useStore = create<AppState>()(
         const u = get().user;
         if (!session || !u) return;
 
-        const elapsed = Math.floor((Date.now() - session.startTime) / 60000);
-        const finished: Session = { ...session, endTime: Date.now(), completed: elapsed >= 1 };
+        const elapsedSec = Math.floor((Date.now() - session.startTime) / 1000);
+        const finished: Session = { ...session, endTime: Date.now(), completed: true };
 
-        // grow a plant if at least 1 min
+        // grow a plant if at least 3 seconds
         const newPlants: GardenPlant[] = [];
-        if (elapsed >= 1) {
+        if (elapsedSec >= 3) {
           const p = PLANTS[Math.floor(Math.random() * PLANTS.length)];
           newPlants.push({
             id: uid(), zone: session.zone,
             emoji: p.emoji, label: p.label,
             sessionName: session.name,
-            minutes: elapsed,
+            minutes: Math.max(1, Math.ceil(elapsedSec / 60)),
             timestamp: Date.now(),
           });
         }
@@ -201,6 +360,34 @@ export const useStore = create<AppState>()(
           garden: [...get().garden, ...newPlants],
           user: { ...u, currentSession: undefined },
         });
+
+        // Persist to Supabase if authenticated (has a real UUID, not 'me')
+        if (u.id !== 'me') {
+          updateProfileZone(u.id, 'comfort', null);
+          saveSession({
+            id: finished.id,
+            userId: u.id,
+            zone: finished.zone,
+            name: finished.name,
+            mode: finished.mode,
+            duration: finished.duration,
+            startTime: finished.startTime,
+            endTime: finished.endTime!,
+            completed: finished.completed,
+          });
+          newPlants.forEach(plant => {
+            savePlant({
+              id: plant.id,
+              userId: u.id,
+              zone: plant.zone,
+              emoji: plant.emoji,
+              label: plant.label,
+              sessionName: plant.sessionName,
+              minutes: plant.minutes,
+              timestamp: plant.timestamp,
+            });
+          });
+        }
       },
 
       joinSession: (friendId) => {
@@ -237,6 +424,59 @@ export const useStore = create<AppState>()(
       },
       rejectRequest: (id) => {
         set({ friendRequests: get().friendRequests.filter(r => r.id !== id) });
+      },
+
+      loadFriendRequests: async () => {
+        const u = get().user;
+        if (!u || u.id === 'me') return;
+        const requests = await fetchFriendRequests(u.id);
+        set({ friendRequests: requests });
+      },
+
+      loadFriends: async () => {
+        const u = get().user;
+        if (!u || u.id === 'me') return;
+        const dbFriends = await fetchFriends(u.id);
+        if (dbFriends.length === 0) { set({ friends: DEMO_FRIENDS }); return; }
+        // Fetch active sessions for all friends
+        const friendIds = dbFriends.map(f => f.id);
+        const activeSessions = await fetchActiveSessions(friendIds);
+        const enriched = dbFriends.map(f => {
+          const session = activeSessions.find(s => s.userId === f.id);
+          return { ...f, currentSession: session || undefined };
+        });
+        set({ friends: enriched });
+      },
+
+      searchUsers: async (query) => {
+        const u = get().user;
+        const results = await searchUsers(query);
+        // Exclude current user from search results
+        const filtered = u ? results.filter(r => r.id !== u.id) : results;
+        set({ searchResults: filtered as any });
+      },
+
+      sendFriendRequest: async (toUserId) => {
+        const u = get().user;
+        if (!u || u.id === 'me') return;
+        await sendFriendRequest(u.id, toUserId);
+        set({ searchResults: [], toast: { message: 'Friend request sent!', type: 'success' } });
+      },
+
+      respondToRequest: async (id, accept) => {
+        const u = get().user;
+        if (!u || u.id === 'me') {
+          // Fall back to existing mock behavior
+          if (accept) get().acceptRequest(id);
+          else get().rejectRequest(id);
+          return;
+        }
+        const req = get().friendRequests.find(r => r.id === id);
+        if (!req) return;
+        await respondToRequest(id, accept, u.id, req.from.id);
+        // Reload friends and requests
+        await get().loadFriendRequests();
+        if (accept) await get().loadFriends();
       },
     }),
     {
